@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { useState } from "react";
+import { useState } from "react"; 
 import { useParams } from "react-router-dom";
 import { CheckCircle, ArrowRight, Users, Loader2, AlertCircle, Eye, EyeOff } from "lucide-react";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -58,11 +58,15 @@ const AcceptUserInvite = () => {
     retry: false,
   });
 
+  // Existing EnvSync accounts join with their current credentials, so no signup form.
+  const accountExists = Boolean(inviteData?.account_exists);
+  const canSubmit = accountExists || Boolean(fullName && password);
+
   const acceptUserInviteMutation = useMutation({
     mutationFn: async (data: {
       invite_code: string;
-      full_name: string;
-      password: string;
+      full_name?: string;
+      password?: string;
     }) => {
       // Call the API with the invite_code as the main parameter and other data as body
       return api.onboarding.acceptUserInvite(data.invite_code, {
@@ -94,7 +98,7 @@ const AcceptUserInvite = () => {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (invite_code && fullName && password && !acceptUserInviteMutation.isPending) {
+    if (invite_code && canSubmit && !acceptUserInviteMutation.isPending) {
       trackAction("user_invite_accept_started", {
         "envsync.event_name": "user_invite_accept_started",
         "envsync.event_category": "onboarding",
@@ -102,11 +106,9 @@ const AcceptUserInvite = () => {
         "envsync.success": true,
         invite_code_present: Boolean(invite_code),
       });
-      acceptUserInviteMutation.mutate({
-        invite_code,
-        full_name: fullName,
-        password
-      });
+      acceptUserInviteMutation.mutate(
+        accountExists ? { invite_code } : { invite_code, full_name: fullName, password },
+      );
     }
   };
 
@@ -150,52 +152,58 @@ const AcceptUserInvite = () => {
                   </div>
                   <CardTitle className="text-white text-2xl">Join the Team</CardTitle>
                   <CardDescription className="text-slate-300">
-                    Complete your account setup to join your organization
+                    {accountExists
+                      ? `You already have an EnvSync account as ${inviteData.invite.email}. Join with your existing credentials.`
+                      : "Complete your account setup to join your organization"}
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
                   <form onSubmit={handleSubmit} className="space-y-4">
-                    <div>
-                      <Label htmlFor="fullName" className="text-slate-300">Full Name *</Label>
-                      <Input
-                        id="fullName"
-                        type="text"
-                        placeholder="John Doe"
-                        value={fullName}
-                        onChange={(e) => setFullName(e.target.value)}
-                        required
-                        disabled={acceptUserInviteMutation.isPending}
-                        className="bg-slate-700 border-slate-600 text-white placeholder:text-slate-400 focus:border-emerald-500"
-                      />
-                    </div>
+                    {!accountExists && (
+                      <>
+                        <div>
+                          <Label htmlFor="fullName" className="text-slate-300">Full Name *</Label>
+                          <Input
+                            id="fullName"
+                            type="text"
+                            placeholder="John Doe"
+                            value={fullName}
+                            onChange={(e) => setFullName(e.target.value)}
+                            required
+                            disabled={acceptUserInviteMutation.isPending}
+                            className="bg-slate-700 border-slate-600 text-white placeholder:text-slate-400 focus:border-emerald-500"
+                          />
+                        </div>
 
-                    <div>
-                      <Label htmlFor="password" className="text-slate-300">Password *</Label>
-                      <div className="relative">
-                        <Input
-                          id="password"
-                          type={showPassword ? "text" : "password"}
-                          placeholder="Create a strong password"
-                          value={password}
-                          onChange={(e) => setPassword(e.target.value)}
-                          required
-                          disabled={acceptUserInviteMutation.isPending}
-                          className="bg-slate-700 border-slate-600 text-white placeholder:text-slate-400 focus:border-emerald-500 pr-12"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setShowPassword(!showPassword)}
-                          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-300 focus:outline-none"
-                        >
-                          {showPassword ? (
-                            <EyeOff className="h-4 w-4" />
-                          ) : (
-                            <Eye className="h-4 w-4" />
-                          )}
-                        </button>
-                      </div>
-                    </div>
-                    
+                        <div>
+                          <Label htmlFor="password" className="text-slate-300">Password *</Label>
+                          <div className="relative">
+                            <Input
+                              id="password"
+                              type={showPassword ? "text" : "password"}
+                              placeholder="Create a strong password"
+                              value={password}
+                              onChange={(e) => setPassword(e.target.value)}
+                              required
+                              disabled={acceptUserInviteMutation.isPending}
+                              className="bg-slate-700 border-slate-600 text-white placeholder:text-slate-400 focus:border-emerald-500 pr-12"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setShowPassword(!showPassword)}
+                              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-300 focus:outline-none"
+                            >
+                              {showPassword ? (
+                                <EyeOff className="h-4 w-4" />
+                              ) : (
+                                <Eye className="h-4 w-4" />
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                      </>
+                    )}
+
                     {acceptUserInviteMutation.isError && (
                       <div className="flex items-center gap-2 text-red-400 text-sm">
                         <AlertCircle className="h-4 w-4" />
@@ -207,7 +215,7 @@ const AcceptUserInvite = () => {
                       type="submit" 
                       className="w-full bg-emerald-600 hover:bg-emerald-700 text-white"
                       size="lg"
-                      disabled={acceptUserInviteMutation.isPending || !fullName || !password}
+                      disabled={acceptUserInviteMutation.isPending || !canSubmit}
                     >
                       {acceptUserInviteMutation.isPending ? (
                         <>
@@ -236,7 +244,9 @@ const AcceptUserInvite = () => {
                     </div>
                     <h3 className="text-2xl font-bold text-white mb-2">Welcome to the Team!</h3>
                     <p className="text-slate-300 mb-6">
-                      Your account has been successfully created. You're now part of the organization.
+                      {accountExists
+                        ? "You're now part of the organization. Sign in with your existing credentials."
+                        : "Your account has been successfully created. You're now part of the organization."}
                     </p>
                   </div>
                   {generatedBundle && (

@@ -13,5 +13,6 @@ export type GetUserInviteByTokenResponse = {
         created_at: string;
         updated_at: string;
     };
+    account_exists: boolean;
 };
 

@@ -4,7 +4,7 @@
 /* eslint-disable */
 export type AcceptUserInviteResponse = {
     message: string;
-    generated_certificate_bundle: {
+    generated_certificate_bundle?: {
         root_ca_pem: string;
         member_cert_pem: string;
         member_key_pem: string;

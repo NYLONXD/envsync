@@ -1,6 +1,6 @@
 import z from "zod";
 
-// For extending the Zod schema with OpenAPI properties
+
 import "zod-openapi/extend";
 
 const generatedCertificateBundleSchema = z.object({
@@ -73,15 +73,17 @@ export const createUserInviteResponseSchema = z
 
 export const acceptUserInviteRequestBodySchema = z
 	.object({
-		full_name: z.string().min(1, "Full name is required").openapi({ example: "John Doe" }),
-		password: z.string().openapi({ example: "securepassword123" }),
+		// Required only when the invited email has no existing EnvSync account.
+		full_name: z.string().min(1, "Full name is required").optional().openapi({ example: "John Doe" }),
+		password: z.string().optional().openapi({ example: "securepassword123" }),
 	})
 	.openapi({ ref: "AcceptUserInviteRequest" });
 
 export const acceptUserInviteResponseSchema = z
 	.object({
 		message: z.string().openapi({ example: "User invite accepted successfully." }),
-		generated_certificate_bundle: generatedCertificateBundleSchema,
+		// Omitted when the member already had a system certificate (e.g. accept retried).
+		generated_certificate_bundle: generatedCertificateBundleSchema.optional(),
 	})
 	.openapi({ ref: "AcceptUserInviteResponse" });
 
@@ -97,6 +99,7 @@ export const getUserInviteByTokenResponseSchema = z
 			created_at: z.string().openapi({ example: "2023-01-01T00:00:00Z" }),
 			updated_at: z.string().openapi({ example: "2023-01-01T00:00:00Z" }),
 		}),
+		account_exists: z.boolean().openapi({ example: false }),
 	})
 	.openapi({ ref: "GetUserInviteByTokenResponse" });
 

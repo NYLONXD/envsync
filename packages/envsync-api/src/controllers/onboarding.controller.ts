@@ -11,7 +11,7 @@ import { orgInviteAcceptLink, userInviteAcceptLink } from "@/helpers/invite-link
 import { EditionPolicyService } from "@/services/edition-policy.service";
 import { OrgProvisioningService } from "@/services/org-provisioning.service";
 import { OrgService } from "@/services/org.service";
-import { RoleService } from "@/services/role.service";
+import { RoleService } from "@/services/role.service"; 
 import { UserService } from "@/services/user.service";
 
 export class OnboardingController {
@@ -141,18 +141,8 @@ export class OnboardingController {
 
 		const { full_name, password } = await c.req.json();
 
-		if (!invite_code || !full_name || !password) {
-			return c.json({ error: "All fields are required." }, 400);
-		}
-
-		if (!isPasswordStrong(password)) {
-			return c.json(
-				{
-					error:
-						"Password must be at least 8 characters long and contain uppercase, lowercase, number, and special character.",
-				},
-				400,
-			);
+		if (!invite_code) {
+			return c.json({ error: "Invite code is required." }, 400);
 		}
 
 		// Check if the invite code is valid and not already accepted
@@ -164,44 +154,88 @@ export class OnboardingController {
 			return c.json({ error: "Invite already accepted." }, 400);
 		}
 
-		// create user
-		const user = await UserService.createUser({
-			email: invite.email,
-			full_name,
-			password,
-			org_id: invite.org_id,
-			role_id: invite.role_id,
-		});
-
-		const [orgCA, role] = await Promise.all([
-			CertificateService.getOrgCA(invite.org_id),
-			RoleService.getRole(invite.role_id),
+		const [existingIdentity, existingMember] = await Promise.all([
+			UserService.findIdentityByEmail(invite.email),
+			UserService.getOrgUserByEmail(invite.org_id, invite.email),
 		]);
+		let user: { id: string };
 
-		if (!orgCA) {
-			throw new AppError(
-				"Organization CA not initialized. Ask an org admin to re-provision system certificates.",
-				409,
-				"ORG_CA_REQUIRED_FOR_SYSTEM_CERT",
-			);
+		if (existingMember) {
+			// Already in this org (e.g. a retry after a failed accept): just finish the invite.
+			user = { id: existingMember.id };
+		} else if (existingIdentity) {
+			// Existing account: add a membership on the same Keycloak identity; credentials stay unchanged.
+			user = await UserService.createMembershipForExistingIdentity({
+				email: invite.email,
+				full_name: existingIdentity.full_name ?? full_name ?? invite.email,
+				profile_picture_url: existingIdentity.profile_picture_url,
+				auth_service_id: existingIdentity.auth_service_id,
+				org_id: invite.org_id,
+				role_id: invite.role_id,
+			});
+		} else {
+			if (!full_name || !password) {
+				return c.json({ error: "All fields are required." }, 400);
+			}
+			if (!isPasswordStrong(password)) {
+				return c.json(
+					{
+						error:
+							"Password must be at least 8 characters long and contain uppercase, lowercase, number, and special character.",
+					},
+					400,
+				);
+			}
+			user = await UserService.createUser({
+				email: invite.email,
+				full_name,
+				password,
+				org_id: invite.org_id,
+				role_id: invite.role_id,
+			});
 		}
 
-		const cert = await CertificateService.issueMemberCert({
-			org_id: invite.org_id,
-			target_user_id: user.id,
-			target_email: invite.email,
-			issued_by_user_id: user.id,
-			envsync_pki_role: CertificateRoleMapper.toPkiRole(role),
-			is_system_generated: true,
-			persist_private_key: true,
-			description: "System-generated member certificate",
-			metadata: {
-				role_id: role.id,
-				role_name: role.name,
-				issued_source: "user_invite_accept",
-			},
-		});
-		const rootCA = await CertificateService.getRootCA();
+		// Issue a member certificate unless this membership already has one.
+		let generated_certificate_bundle;
+		if (!(await CertificateService.getLatestActiveSystemMemberCert(invite.org_id, user.id))) {
+			const [orgCA, role] = await Promise.all([
+				CertificateService.getOrgCA(invite.org_id),
+				RoleService.getRole(invite.role_id),
+			]);
+
+			if (!orgCA) {
+				throw new AppError(
+					"Organization CA not initialized. Ask an org admin to re-provision system certificates.",
+					409,
+					"ORG_CA_REQUIRED_FOR_SYSTEM_CERT",
+				);
+			}
+
+			const cert = await CertificateService.issueMemberCert({
+				org_id: invite.org_id,
+				target_user_id: user.id,
+				target_email: invite.email,
+				issued_by_user_id: user.id,
+				envsync_pki_role: CertificateRoleMapper.toPkiRole(role),
+				is_system_generated: true,
+				persist_private_key: true,
+				description: "System-generated member certificate",
+				metadata: {
+					role_id: role.id,
+					role_name: role.name,
+					issued_source: "user_invite_accept",
+				},
+			});
+			const rootCA = await CertificateService.getRootCA();
+			generated_certificate_bundle = {
+				root_ca_pem: rootCA.cert_pem,
+				member_cert_pem: cert.cert_pem ?? "",
+				member_key_pem: cert.key_pem,
+				member_certificate_id: cert.id,
+				member_serial_hex: cert.serial_hex,
+				is_system_generated: true,
+			};
+		}
 
 		// update invite
 		await InviteService.updateUserInvite(invite.id, {
@@ -224,14 +258,7 @@ export class OnboardingController {
 		return c.json(
 			{
 				message: "User invite accepted successfully.",
-				generated_certificate_bundle: {
-					root_ca_pem: rootCA.cert_pem,
-					member_cert_pem: cert.cert_pem ?? "",
-					member_key_pem: cert.key_pem,
-					member_certificate_id: cert.id,
-					member_serial_hex: cert.serial_hex,
-					is_system_generated: true,
-				},
+				generated_certificate_bundle,
 			},
 			200,
 		);
@@ -245,8 +272,9 @@ export class OnboardingController {
 		}
 
 		const invite = await InviteService.getUserInviteByCode(invite_code);
+		const account_exists = Boolean(await UserService.findIdentityByEmail(invite.email));
 
-		return c.json({ invite }, 200);
+		return c.json({ invite, account_exists }, 200);
 	};
 
 	// update user invite

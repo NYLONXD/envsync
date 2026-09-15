@@ -9,7 +9,7 @@ import { AppError, orNotFound } from "@/libs/errors";
 import { runSaga } from "@/helpers/saga";
 import { invalidateSessionToken } from "@/libs/kms/session-manager";
 import { AuthorizationService } from "@/services/authorization.service";
-import type { Database } from "@/types/db";
+import type { Database } from "@/types/db"; 
 
 type UserMembershipRecord = Selectable<Database["users"]>;
 
@@ -501,6 +501,19 @@ export class UserService {
 	};
 
 	public static getUserByIdpId = (idpId: string) => UserService.getUserByKeycloakId(idpId);
+
+	
+	public static findIdentityByEmail = async (email: string) => {
+		const db = await DB.getInstance();
+		return db
+			.selectFrom("users")
+			.select(["id", "auth_service_id", "full_name", "profile_picture_url"])
+			.where("email", "=", email)
+			.where("auth_service_id", "is not", null)
+			.orderBy("created_at", "asc")
+			.$narrowType<{ auth_service_id: string }>()
+			.executeTakeFirst();
+	};
 
 	public static getOrgUserByEmail = async (org_id: string, email: string) => {
 		const db = await DB.getInstance();
